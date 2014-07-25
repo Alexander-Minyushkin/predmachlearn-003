@@ -1,0 +1,133 @@
+Practical Machine Learning Writeup
+========================================================
+
+This is a project for Coursera peer review.
+
+Background 
+---------------------------------
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+
+Analysis
+---------------------------------
+
+
+Uploading required data
+```{r}
+
+library(caret)
+Sys.setlocale("LC_TIME", "us")
+
+pml_training <- read.csv("pml-training.csv", stringsAsFactors=F)
+pml_testing <- read.csv("pml-testing.csv", stringsAsFactors=F)
+
+
+pml_training_num <- pml_training
+
+pml_training_num$user_name <- as.factor(pml_training_num$user_name)
+pml_training_num$classe <- as.factor(pml_training_num$classe)
+
+```
+
+I want to use classification tree as a prediction algorithm so I tried to choose most suitable predictors for this. I used following function to plot density for each variable
+```{r}
+my_gg <- function(col_id) {  
+    
+  if(is.numeric (pml_training_num[, col_id]))
+  {
+        vals <- data.frame(val = pml_training_num[,col_id],
+                           user_name = pml_training_num$user_name,
+                           classe = pml_training_num$classe)
+        
+        ggplot(vals, aes(x=val, colour=user_name))  + 
+          geom_density(alpha=.5, position="identity") +
+          facet_wrap( ~ classe, ncol=1) +
+          ggtitle(names(pml_training_num)[col_id])
+  }else{
+    tt <- table(pml_training_num[, col_id])
+    t_data <-data.frame( name=names(tt), amount = as.numeric(tt))
+    
+    ggplot(t_data, aes(x = name, y=amount)) + geom_bar(stat="identity", fill="gray", colour="blue")+
+      ggtitle(names(pml_training_num)[col_id])
+    
+  }
+}
+
+my_gg(121)
+```
+
+Here you can see that Eurico (blue line) has siginificant spikes in C and A cases at different places.For Charles (green line) we can see spike at in A case which is significantly different from spikes in other cases. This kind of distributions should fit well to classification algorithm.
+
+Finally I end up with following predictors:
+
+```{r}
+predictors_of_interest <-c(2, 86, 116, 117, 118, 119, 121, 140, 154, 155, 157, 159, 160)
+
+names(pml_training_num)[predictors_of_interest]
+
+```
+
+Cross validation
+---------------------------------
+
+Subset data for cross validation:
+```{r}
+set.seed(1234)
+
+sub_test_id <- sample(1:(dim(pml_training_num)[1]), 40)
+
+sub_test <- pml_training_num[sub_test_id, predictors_of_interest ]
+sub_train <- pml_training_num[-sub_test_id, predictors_of_interest]
+
+```
+
+All people are different and devices that collect data about personal activity should be calibrated separately for each person. So we need to build prediction model separately for each user_name. 
+
+```{r}
+modName <- names(table(sub_train$user_name))
+
+start <- Sys.time()
+
+modFits <- lapply(modName, 
+                  function(x) train(classe ~., method = "rpart", data = sub_train[sub_train$user_name == x, ]))
+
+Sys.time() - start
+```
+This call takes a bunch of time.
+
+
+
+
+Here are functions to apply model to correspondent data sets chosen by user_name:
+```{r}
+predict_by_Name <- function(us_nm, newdata){
+  mf <- modFits[[which(modName == us_nm)]]
+  predict(mf, newdata[newdata$user_name == us_nm,])
+}
+
+predict_full <- function(newdata){
+  answers = rep("NA", dim(newdata)[1])
+  
+  for (nm in modName)
+  {
+    answers[newdata$user_name == nm] <- as.character(predict_by_Name(nm, newdata))
+  }
+  
+  answers
+}
+
+```
+
+And function to evaluate out-of-sample misprediction
+
+```{r}
+missClass = function(values,prediction){sum(prediction != values)/length(values)}
+
+missClass( as.character(sub_test$classe), predict_full(sub_test))
+
+```
+
+Good Result! At lease better than 50% (minimal acceptable level to achieve "Certificate With Distinction")
+
+Finally we need to apply this model to 'pml_testing' and submit results to Coursera.
+
